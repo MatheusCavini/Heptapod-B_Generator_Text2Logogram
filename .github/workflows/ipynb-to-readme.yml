@@ -1,0 +1,52 @@
+name: Convert Notebook to README
+
+on:
+  push:
+    paths:
+      - "*.ipynb"
+      - ".github/workflows/ipynb-to-readme.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install nbconvert
+
+      - name: Convert notebook to README.md (with assets)
+        run: |
+          NOTEBOOK="heptapod-b-generator-text2logogram.ipynb"  # <-- CHANGE THIS
+          # Clean previous assets (avoid stale images)
+          rm -rf *_files
+
+          # Convert notebook
+          jupyter nbconvert --to markdown "$NOTEBOOK" --output README
+
+      - name: Commit README and assets
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
+          # Add README
+          git add README.md
+
+          # Add asset folders (images, etc.)
+          git add *_files || true
+
+          # Commit only if there are changes
+          git commit -m "Auto-update README from notebook" || echo "No changes to commit"
+
+          git push
