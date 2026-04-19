@@ -1,5 +1,9 @@
 <a href="https://www.kaggle.com/code/matheuslatorrecavini/heptapod-b-generator-text2logogram?scriptVersionId=312732922" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
 
+<a href="https://huggingface.co/spaces/MatheusCavini/Heptapod-B_Generator_Text2Logogram" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
+
+Check the demo at: https://huggingface.co/spaces/MatheusCavini/Heptapod-B_Generator_Text2Logogram
+
 # Heptapod-B Generator
 
 ## Introduction
