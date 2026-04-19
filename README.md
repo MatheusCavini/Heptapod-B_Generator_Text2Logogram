@@ -1,11 +1,15 @@
 <a href="https://www.kaggle.com/code/matheuslatorrecavini/heptapod-b-generator-text2logogram?scriptVersionId=312732922" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
 
-<a href="https://huggingface.co/spaces/MatheusCavini/Heptapod-B_Generator_Text2Logogram" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
 
+<a href="https://huggingface.co/spaces/MatheusCavini/Heptapod-B_Generator_Text2Logogram" target="_blank">
+  <img align="left" alt="Hugging Face Spaces" title="Open in Hugging Face Spaces"
+       src="https://huggingface.co/datasets/huggingface/badges/raw/main/deploy-on-spaces-md.svg">
+</a>
+
+
+
+# Heptapod-B Generator 
 Check the demo at: https://huggingface.co/spaces/MatheusCavini/Heptapod-B_Generator_Text2Logogram
-
-# Heptapod-B Generator
-
 ## Introduction
 
 For those who are unfamiliar with what this notebook might be about, **Heptapod-B** is the name of the written language spoken by the aliens named *Heptapods*, in the movie **Arrival (2016)**.
