@@ -1,4 +1,4 @@
-<a href="https://www.kaggle.com/code/matheuslatorrecavini/heptapod-b-generator-text2logogram?scriptVersionId=312508186" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
+<a href="https://www.kaggle.com/code/matheuslatorrecavini/heptapod-b-generator-text2logogram?scriptVersionId=312732922" target="_blank"><img align="left" alt="Kaggle" title="Open in Kaggle" src="https://kaggle.com/static/images/open-in-kaggle.svg"></a>
 
 # Heptapod-B Generator
 
@@ -216,7 +216,7 @@ class ConvVAE(nn.Module):
 ```python
 def vae_loss(recon_x, x, mu, logvar):
     beta = 1.0
-    recon_loss = F.mse_loss(recon_x, x, reduction='sum')
+    recon_loss = F.binary_cross_entropy(recon_x, x, reduction='sum')
     kl_div = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
     return recon_loss + beta * kl_div
 ```
@@ -283,6 +283,12 @@ show_tensor_image(recon)
 plt.show()
 ```
 
+
+    
+![png](README_files/README_15_0.png)
+    
+
+
 ### Loading a pre-trained VAE model
 
 In case you want to skip the training process for the VAE, run the cells below to load the parameters I have trained before.
@@ -291,10 +297,14 @@ In case you want to skip the training process for the VAE, run the cells below t
 ```python
 loader = DataLoader(dataset, batch_size=100, shuffle=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
+print("Using Device: "+str(device))
 vae = ConvVAE(latent_dim=256)
 vae.load_state_dict(torch.load("/kaggle/input/trained-vae/pytorch/default/1/vae_trained_2.pth", map_location=device))
 vae.eval().to(device)  
 ```
+
+    Using Device: cuda
+
 
 
 
@@ -502,9 +512,59 @@ generate_logogram(text_to_generate, gru=gru, vae=vae, vocab=vocab, device=device
     
 
 
-## Evaluating the Results
+### Sharpening the image 
 
-### TODO
+The combination of a $\beta$-VAE with a Mean Squared Error (MSE) reconstruction loss naturally leads to outputs that are not strictly binary, but instead lie in a continuous grayscale range. This often results in slightly blurred images, as the model tends to average over possible reconstructions rather than committing to sharp, high-contrast edges.
+
+Interestingly, this behavior is not entirely undesirable. In fact, the soft, diffuse appearance resembles the way logograms are depicted in Arrival, emerging as fluid, ink-like structures rather than crisp, hand-drawn symbols. From a stylistic perspective, this can be seen as a feature rather than a flaw.
+
+However, if the goal is to recover sharper, more discrete logograms, closer to the training data, a simple post-processing step can be applied: image binarization through thresholding.
+
+By applying a threshold to the pixel intensities, we can force the output to take on only two values (black and white), effectively removing intermediate gray levels and sharpening edges.
+
+
+```python
+def generate_logogram_binary(text, gru, vae, vocab, device="cpu", threshold=0.5):
+    gru.eval()
+    vae.eval()
+
+    with torch.no_grad():
+        # Text -> tokens
+        token_ids = torch.tensor(
+            [vocab.encode(text)],
+            dtype=torch.long
+        ).to(device)
+
+        # Text -> latent vector
+        z = gru(token_ids)
+
+        # Decode image
+        img = vae.decoder(vae.fc_decode(z)).squeeze(0).cpu()
+
+        # Convert RGB -> grayscale
+        img_gray = img.mean(dim=0)
+
+        # Threshold
+        img_binary = (img_gray > threshold).float().numpy()
+
+        plt.figure(figsize=(5, 5))
+        plt.imshow(img_binary, cmap="gray")
+        plt.title(text)
+        plt.axis("off")
+        plt.show()
+```
+
+
+```python
+text_to_generate =  "Earth is dead"
+generate_logogram_binary(text_to_generate, gru=gru, vae=vae, vocab=vocab, device=device, threshold=0.5)
+```
+
+
+    
+![png](README_files/README_33_0.png)
+    
+
 
 ## Exploring Latent Space Interpolation and Logogram Morphing
 
@@ -600,23 +660,293 @@ animate_logogram_interpolation(
 
 
 ```python
-from IPython.display import Image as IPImage
+from IPython.display import HTML
+print("[CHECK THE OUTPUT FILES FOR LOGOGRAM_MORPHING.GIF IF IT DOES NOT RENDER HERE]")
+HTML('<img src="logogram_morphing.gif">')
 
-IPImage(filename="logogram_morphing.gif")
 ```
 
+    [CHECK THE OUTPUT FILES FOR LOGOGRAM_MORPHING.GIF IF IT DOES NOT RENDER HERE]
 
 
 
-    <IPython.core.display.Image object>
+
+
+<img src="logogram_morphing.gif">
 
 
 
 ## An Attempt for Out-of-Vocabulary (OOV) Generalization
 
-### TODO
+One of the main limitations of the initial model was its inability to handle out-of-vocabulary (OOV) words. Since the vocabulary was built exclusively from the training dataset — which is already very small — any unseen word at inference time would be mapped to a generic `<UNK>` token. This effectively collapses all unknown words into the same representation, making it impossible for the model to distinguish between them.
+
+To address this, I explored the use of pre-trained word embeddings, specifically GloVe (Global Vectors for Word Representation). Unlike embeddings learned from scratch, GloVe vectors are trained on large text corpora and capture rich semantic relationships between words. This allows the model to leverage prior knowledge about language, even for words that never appeared in the training dataset.
+
+Instead of learning embeddings solely from the limited dataset, we:
+
+1. Initialize the embedding layer with GloVe vectors
+2. Expand the vocabulary to include all words present in GloVe
+3. Allow the model to map semantically similar words to similar latent representations
+
+This enables the model to generalize beyond the training data — at least in a semantic sense.
+
+### Step 1: Load GloVe and collect available words
 
 
 ```python
-
+!wget http://nlp.stanford.edu/data/glove.6B.zip
+!unzip -q glove.6B.zip
 ```
+
+
+```python
+glove_path = "glove.6B.100d.txt"
+glove_words = set()
+
+with open(glove_path, encoding="utf-8") as f:
+    for line in f:
+        word = line.split()[0]
+        glove_words.add(word)
+```
+
+### Step 2: Build the Tokenizer with full GloVe vocabulary
+
+
+```python
+class Vocab:
+    def __init__(self, glove_words):
+        self.word2idx = {"<PAD>": 0, "<UNK>": 1}
+        self.idx2word = ["<PAD>", "<UNK>"]
+
+        for word in glove_words:
+            self.word2idx[word] = len(self.idx2word)
+            self.idx2word.append(word)
+
+    def encode(self, sentence):
+        return [
+            self.word2idx.get(word.lower(), self.word2idx["<UNK>"])
+            for word in sentence.lower().split()
+        ]
+
+    def __len__(self):
+        return len(self.idx2word)
+```
+
+
+```python
+vocab = Vocab(glove_words)
+```
+
+### Step 3: Build Embedding Matrix from GloVe
+
+
+```python
+import torch
+
+def load_glove_embeddings(filepath, vocab, embed_dim=100):
+    embeddings_index = {}
+    with open(filepath, encoding="utf-8") as f:
+        for line in f:
+            values = line.split()
+            word = values[0]
+            vector = torch.tensor([float(v) for v in values[1:]], dtype=torch.float)
+            embeddings_index[word] = vector
+
+    matrix = torch.randn(len(vocab), embed_dim)
+    matrix[0] = torch.zeros(embed_dim)  # PAD = zero
+
+    for word, idx in vocab.word2idx.items():
+        if word in embeddings_index:
+            matrix[idx] = embeddings_index[word]
+
+    return matrix
+
+glove_matrix = load_glove_embeddings(glove_path, vocab, embed_dim=100)
+```
+
+### Step 4: Modify and retrain the GRU
+
+Now, our the embedding layer of the GRU model doesn't need to be trained from scratch. It can just load the one we just built above, and use it.
+
+
+```python
+import torch.nn as nn
+
+class GRU(nn.Module):
+    def __init__(self, vocab_size, embed_dim, latent_dim, pretrained_embedding=None):
+        super().__init__()
+        if pretrained_embedding is not None:
+            self.embed = nn.Embedding.from_pretrained(pretrained_embedding, freeze=False)
+        else:
+            self.embed = nn.Embedding(vocab_size, embed_dim)
+        self.rnn = nn.GRU(embed_dim, latent_dim, batch_first=True)
+        self.fc = nn.Linear(latent_dim, latent_dim)
+
+    def forward(self, token_ids):
+        embedded = self.embed(token_ids)
+        _, hidden = self.rnn(embedded)
+        return self.fc(hidden.squeeze(0))
+```
+
+
+```python
+from torch.nn.utils.rnn import pad_sequence
+
+gru_glove = GRU(vocab_size=len(vocab), embed_dim=100, latent_dim=256, pretrained_embedding=glove_matrix).to(device)
+optimizer = torch.optim.Adam(gru_glove.parameters(), lr=1e-3)
+loss_fn = nn.MSELoss()
+
+# Training Loop
+for epoch in range(60):
+    gru_glove.train()
+    total_loss = 0
+    for captions, images in loader:
+        # Tokenize the captions
+        token_tensors = [torch.tensor(vocab.encode(c), dtype=torch.long) for c in captions]
+        token_batch = pad_sequence(token_tensors, batch_first=True, padding_value=0).to(device)
+
+        images = images.to(device)
+
+        with torch.no_grad():
+            _, mu, logvar = vae(images)
+
+        # Compute expected latent representation for the associated logogram
+        z_target = vae.reparameterize(mu, logvar)
+        z_pred = gru_glove(token_batch)
+
+        loss = loss_fn(z_pred, z_target)
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+
+    print(f"Epoch {epoch+1}, Loss: {total_loss / len(loader):.4f}")
+```
+
+
+```python
+torch.save(gru_glove.state_dict(), "gru_trained_with_glove_2.pth")
+```
+
+### Step 5: Use new GRU model to generate logograms from unseen vocabulary
+
+
+```python
+gru_glove = GRU(vocab_size=len(vocab), embed_dim=100, latent_dim=256, pretrained_embedding=glove_matrix).to(device) 
+gru_glove.load_state_dict(torch.load("/kaggle/working/gru_trained_with_glove.pth", map_location=device))
+gru_glove.eval().to(device)
+```
+
+
+```python
+def compare_logograms_binary(
+    texts,
+    gru,
+    vae,
+    vocab,
+    device="cpu",
+    threshold=0.5,
+    cols=4,
+    figsize=(12, 8)
+):
+    gru.eval()
+    vae.eval()
+
+    n = len(texts)
+    rows = (n + cols - 1) // cols  # ceil division
+
+    plt.figure(figsize=figsize)
+
+    with torch.no_grad():
+        for i, text in enumerate(texts):
+            # Text -> tokens
+            token_ids = torch.tensor(
+                [vocab.encode(text)],
+                dtype=torch.long
+            ).to(device)
+
+            # Text -> latent
+            z = gru(token_ids)
+
+            # Decode image
+            img = vae.decoder(vae.fc_decode(z)).squeeze(0).cpu()
+
+            # RGB -> grayscale
+            img_gray = img.mean(dim=0)
+
+            # Threshold
+            img_binary = (img_gray > threshold).float().numpy()
+
+            # Plot
+            plt.subplot(rows, cols, i + 1)
+            plt.imshow(img_binary, cmap="gray")
+            plt.title(text, fontsize=10)
+            plt.axis("off")
+
+    plt.tight_layout()
+    plt.show()
+```
+
+Now we can compare different terms and sentences and see how related concepts result in similar logograms, even though the terms were not present in the sentences of the dataset.
+
+
+```python
+texts_to_generate =  ["Human", "Person", "Animal"]
+compare_logograms_binary(texts_to_generate, gru=gru_glove, vae=vae, vocab=vocab, device=device)
+```
+
+
+    
+![png](README_files/README_55_0.png)
+    
+
+
+
+```python
+texts_to_generate =  ["Before and After", "Past and Future", "Now"]
+compare_logograms_binary(texts_to_generate, gru=gru_glove, vae=vae, vocab=vocab, device=device)
+```
+
+
+    
+![png](README_files/README_56_0.png)
+    
+
+
+
+```python
+texts_to_generate =  ["Louise has questions", "Heptapods have the answer"]
+compare_logograms_binary(texts_to_generate, gru=gru_glove, vae=vae, vocab=vocab, device=device)
+```
+
+
+    
+![png](README_files/README_57_0.png)
+    
+
+
+
+```python
+texts_to_generate =  ["1, 2, 3", "One, two, three", "Message"]
+compare_logograms_binary(texts_to_generate, gru=gru_glove, vae=vae, vocab=vocab, device=device, threshold=0.7)
+```
+
+
+    
+![png](README_files/README_58_0.png)
+    
+
+
+From this point, you are free to type any sentence, convert it to a logogram and decide whether it makes any sense or not, or at least if it looks cool.
+
+While this approach improves generalization, it introduces an important caveat:
+
+- The model becomes strongly biased toward semantic similarity as defined by GloVe.
+
+This leads to a behavior where:
+
+- Words with similar meanings → similar embeddings → similar latent vectors → similar logograms
+
+However, this is not consistent with the nature of Heptapod-B, where even closely related concepts may have completely distinct logograms.
+
+Despite not being fully aligned with the fictional language, this approach demonstrates how pre-trained linguistic knowledge can be injected into multimodal models, enabling them to operate beyond the constraints of small datasets.
